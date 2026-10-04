@@ -81,6 +81,14 @@ def test_state_dict_restores_patience_progress_and_trainability():
     assert not restored._warmed_up
     pl_module.set_encoder_trainable.assert_called_once_with(trainable=False)
 
+    for epoch in (4, 5):
+        trainer.current_epoch = epoch
+        trainer.callback_metrics = {"val/reconstruction_loss": torch.tensor(0.8)}
+        restored.on_validation_epoch_end(trainer, pl_module)
+    assert restored._warmed_up
+    assert restored._wait == 5
+    pl_module.set_encoder_trainable.assert_called_with(trainable=True)
+
 
 def test_warmed_up_state_restores_trainable_encoder():
     cb = PatienceWarmupCallback(monitor="val/reconstruction_loss", patience=2)

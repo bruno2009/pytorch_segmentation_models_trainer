@@ -428,6 +428,22 @@ Freezes the model encoder before training and through the first `warmup_epochs` 
 
 ---
 
+### `PatienceWarmupCallback`
+
+Freezes the encoder until the monitored validation metric has stopped improving for the configured patience. The callback persists its best value, wait count, and warmed-up state in Lightning checkpoints; after a full checkpoint resume it continues the patience calculation and restores encoder trainability. Do not configure it together with `WarmupCallback`, since both control the encoder.
+
+```yaml
+callbacks:
+  - _target_: pytorch_segmentation_models_trainer.custom_callbacks.training_callbacks.PatienceWarmupCallback
+    monitor: loss/val
+    patience: 5
+    min_delta: 0.0001
+    mode: min
+    min_epochs: 0
+```
+
+---
+
 ### `FrameFieldOnlyCrossfieldWarmupCallback`
 
 **Import path**

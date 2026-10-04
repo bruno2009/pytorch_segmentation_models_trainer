@@ -64,6 +64,8 @@ class TestHyperparameters:
         assert cfg.epochs == 10
         assert cfg.max_lr == 1e-2
         assert cfg.classes == 1
+        assert cfg.resume_from_checkpoint is None
+        assert cfg.init_from_checkpoint is None
         with pytest.raises(MissingMandatoryValue):
             _ = cfg.backbone
 

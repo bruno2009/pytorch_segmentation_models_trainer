@@ -21,6 +21,8 @@
 
 import logging
 import re
+from collections.abc import Mapping
+
 import torch
 
 from pytorch_segmentation_models_trainer.custom_callbacks.training_callbacks import (
@@ -145,12 +147,14 @@ def train(cfg: DictConfig):
             resume_from_checkpoint,
         )
     elif init_from_checkpoint:
-        logger.info("Initializing model weights from checkpoint: %s", init_from_checkpoint)
+        logger.info(
+            "Initializing model weights from checkpoint: %s", init_from_checkpoint
+        )
         checkpoint = torch.load(
             init_from_checkpoint, map_location="cpu", weights_only=False
         )
         state_dict = checkpoint.get("state_dict", checkpoint)
-        if not isinstance(state_dict, dict):
+        if not isinstance(state_dict, Mapping):
             raise ValueError(
                 f"Checkpoint at {init_from_checkpoint!r} does not contain a state_dict."
             )

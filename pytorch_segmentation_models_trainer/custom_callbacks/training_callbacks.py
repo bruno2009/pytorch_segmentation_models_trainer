@@ -70,9 +70,6 @@ class WarmupCallback(pl.callbacks.Callback):
         self.set_component_trainable(pl_module, trainable=True)
         self.warmed_up = True
 
-    def on_train_epoch_end(self, trainer, pl_module):
-        return
-
     def set_component_trainable(self, pl_module, trainable=True):
         pl_module.set_encoder_trainable(trainable=trainable)
 
@@ -556,6 +553,8 @@ class EMACallback(pl.callbacks.Callback):
                 if param.requires_grad
             }
             self._last_global_step = -1
+        else:
+            self._last_global_step = trainer.global_step
 
     def on_before_optimizer_step(self, trainer, pl_module, optimizer):
         for name, param in pl_module.named_parameters():
@@ -610,9 +609,22 @@ class EMACallback(pl.callbacks.Callback):
                 checkpoint["state_dict"][name] = shadow_param.cpu().clone()
 
     def state_dict(self):
+        """Return the EMA state Lightning should persist in checkpoints.
+
+        Returns:
+            A mapping containing the shadow parameters and decay factor.
+        """
         return {"shadow": self._shadow, "decay": self.decay}
 
     def load_state_dict(self, state_dict):
+        """Restore EMA state from a Lightning checkpoint.
+
+        Args:
+            state_dict: Previously serialized EMA callback state.
+
+        Returns:
+            ``None``.
+        """
         self._shadow = state_dict.get("shadow", {})
         self.decay = state_dict.get("decay", self.decay)
         self._state_loaded = True
@@ -794,8 +806,8 @@ class PatienceWarmupCallback(pl.callbacks.Callback):
     fixed ``warmup_epochs`` because the decoder converges at different speeds
     depending on architecture and data.
 
-    On ``on_fit_start`` the encoder is frozen via
-    ``pl_module.set_encoder_trainable(trainable=False)``.  After each
+    On ``on_fit_start`` the encoder trainability is restored from the callback
+    state (frozen until patience is exhausted, trainable afterward).  After each
     validation epoch the monitored metric is compared to the best seen so far.
     If it does not improve by at least ``min_delta`` for ``patience``
     consecutive epochs (and ``min_epochs`` have passed), the encoder is
@@ -868,6 +880,11 @@ class PatienceWarmupCallback(pl.callbacks.Callback):
         pl_module.set_encoder_trainable(trainable=self._warmed_up)
 
     def state_dict(self):
+        """Return patience progress for checkpoint persistence.
+
+        Returns:
+            The best monitored value, wait count, and warmup completion flag.
+        """
         return {
             "best": self._best,
             "wait": self._wait,
@@ -875,6 +892,14 @@ class PatienceWarmupCallback(pl.callbacks.Callback):
         }
 
     def load_state_dict(self, state_dict):
+        """Restore patience progress from a checkpoint.
+
+        Args:
+            state_dict: Previously serialized callback state.
+
+        Returns:
+            ``None``.
+        """
         self._best = state_dict.get("best")
         self._wait = state_dict.get("wait", 0)
         self._warmed_up = state_dict.get("warmed_up", False)

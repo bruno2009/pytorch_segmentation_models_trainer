@@ -160,6 +160,35 @@ class Test_Train(CustomTestCase):
             mock_trainer.fit.call_args.kwargs["ckpt_path"], checkpoint_path
         )
 
+    @patch("pytorch_segmentation_models_trainer.train.import_module_from_cfg")
+    @patch("pytorch_segmentation_models_trainer.train.Trainer")
+    def test_resume_constructs_configured_pl_model(
+        self, MockTrainer, mock_import_module
+    ):
+        mock_trainer = MagicMock(spec=pl.Trainer)
+        MockTrainer.return_value = mock_trainer
+        configured_model = MagicMock()
+        model_class = MagicMock(return_value=configured_model)
+        mock_import_module.return_value = model_class
+        checkpoint_path = "/tmp/custom-resume.ckpt"
+
+        with initialize(config_path="./test_configs"):
+            cfg = compose(
+                config_name="experiment.yaml",
+                overrides=[
+                    "train_dataset.input_csv_path=" + self.csv_ds_file,
+                    "val_dataset.input_csv_path=" + self.csv_ds_file,
+                    f"++hyperparameters.resume_from_checkpoint={checkpoint_path}",
+                    "++pl_model._target_=tests.test_train.ConfiguredModel",
+                ],
+            )
+            train(cfg)
+
+        model_class.assert_called_once_with(cfg)
+        mock_trainer.fit.assert_called_once_with(
+            configured_model, ckpt_path=checkpoint_path
+        )
+
     @patch("pytorch_segmentation_models_trainer.train.Trainer")
     @patch.object(Model, "setup")
     def test_null_resume_checkpoint_does_not_resume(self, mock_setup, MockTrainer):
@@ -177,7 +206,8 @@ class Test_Train(CustomTestCase):
             )
             train(cfg)
 
-        mock_trainer.fit.assert_called_once_with(mock_trainer.fit.call_args.args[0])
+        self.assertEqual(mock_trainer.fit.call_count, 1)
+        self.assertEqual(mock_trainer.fit.call_args.kwargs, {})
 
     @patch("pytorch_segmentation_models_trainer.train.torch.load")
     @patch("pytorch_segmentation_models_trainer.train.Trainer")
@@ -205,7 +235,61 @@ class Test_Train(CustomTestCase):
             "/tmp/weights.ckpt", map_location="cpu", weights_only=False
         )
         mock_load_state_dict.assert_called_once_with({"weight": "weights"})
-        mock_trainer.fit.assert_called_once_with(mock_trainer.fit.call_args.args[0])
+        self.assertEqual(mock_trainer.fit.call_count, 1)
+        self.assertEqual(mock_trainer.fit.call_args.kwargs, {})
+
+    @patch("pytorch_segmentation_models_trainer.train.import_module_from_cfg")
+    @patch("pytorch_segmentation_models_trainer.train.torch.load")
+    @patch("pytorch_segmentation_models_trainer.train.Trainer")
+    def test_init_from_checkpoint_supports_configured_pl_model(
+        self, MockTrainer, mock_torch_load, mock_import_module
+    ):
+        mock_trainer = MagicMock(spec=pl.Trainer)
+        MockTrainer.return_value = mock_trainer
+        mock_torch_load.return_value = {"state_dict": {"weight": "weights"}}
+        configured_model = MagicMock()
+        model_class = MagicMock(return_value=configured_model)
+        mock_import_module.return_value = model_class
+
+        with initialize(config_path="./test_configs"):
+            cfg = compose(
+                config_name="experiment.yaml",
+                overrides=[
+                    "train_dataset.input_csv_path=" + self.csv_ds_file,
+                    "val_dataset.input_csv_path=" + self.csv_ds_file,
+                    "++hyperparameters.init_from_checkpoint=/tmp/weights.ckpt",
+                    "++pl_model._target_=tests.test_train.ConfiguredModel",
+                ],
+            )
+            train(cfg)
+
+        configured_model.load_state_dict.assert_called_once_with(
+            {"weight": "weights"}
+        )
+        mock_trainer.fit.assert_called_once_with(configured_model)
+
+    @patch("pytorch_segmentation_models_trainer.train.torch.load")
+    @patch("pytorch_segmentation_models_trainer.train.Trainer")
+    @patch.object(
+        Model, "load_state_dict", side_effect=RuntimeError("missing model keys")
+    )
+    @patch.object(Model, "setup")
+    def test_incompatible_init_checkpoint_raises_clear_error(
+        self, mock_setup, mock_load_state_dict, MockTrainer, mock_torch_load
+    ):
+        mock_torch_load.return_value = {"state_dict": {"unexpected": "weights"}}
+
+        with initialize(config_path="./test_configs"):
+            cfg = compose(
+                config_name="experiment.yaml",
+                overrides=[
+                    "train_dataset.input_csv_path=" + self.csv_ds_file,
+                    "val_dataset.input_csv_path=" + self.csv_ds_file,
+                    "++hyperparameters.init_from_checkpoint=/tmp/bad.ckpt",
+                ],
+            )
+            with self.assertRaisesRegex(RuntimeError, "incompatible with"):
+                train(cfg)
 
     def test_checkpoint_options_are_mutually_exclusive(self):
         with initialize(config_path="./test_configs"):
@@ -217,6 +301,30 @@ class Test_Train(CustomTestCase):
                 ],
             )
             with self.assertRaisesRegex(ValueError, "Set only one"):
+                train(cfg)
+
+    @patch.object(Model, "setup")
+    def test_encoder_warmup_callbacks_cannot_be_combined(self, mock_setup):
+        with initialize(config_path="./test_configs"):
+            cfg = compose(
+                config_name="experiment.yaml",
+                overrides=[
+                    "train_dataset.input_csv_path=" + self.csv_ds_file,
+                    "val_dataset.input_csv_path=" + self.csv_ds_file,
+                ],
+            )
+            cfg.callbacks = [
+                {
+                    "_target_": "pytorch_segmentation_models_trainer.custom_callbacks."
+                    "training_callbacks.WarmupCallback"
+                },
+                {
+                    "_target_": "pytorch_segmentation_models_trainer.custom_callbacks."
+                    "training_callbacks.PatienceWarmupCallback",
+                    "monitor": "loss/val",
+                },
+            ]
+            with self.assertRaisesRegex(ValueError, "cannot be configured together"):
                 train(cfg)
 
     @patch("pytorch_segmentation_models_trainer.train.Trainer")
