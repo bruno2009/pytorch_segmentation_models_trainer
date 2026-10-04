@@ -54,29 +54,24 @@ class WarmupCallback(pl.callbacks.Callback):
     def on_fit_start(self, trainer, pl_module):
         """Called when fit begins - replaces on_init_end"""
         logger.info("WarmupCallback initialization at epoch %d.", trainer.current_epoch)
-        if trainer.current_epoch > self.warmup_epochs - 1:
-            self.warmed_up = True
-
-    def on_train_epoch_start(self, trainer, pl_module):
-        if self.warmed_up or trainer.current_epoch < self.warmup_epochs - 1:
-            return
-        if not self.warmed_up:
-            logger.info(
-                "Model will warm up for %d epochs. Freezing encoder weights.",
-                self.warmup_epochs,
-            )
-            self.set_component_trainable(pl_module, trainable=False)
-
-    def on_train_epoch_end(self, trainer, pl_module):
-        if self.warmed_up:
-            return
-        if trainer.current_epoch >= self.warmup_epochs - 1:
-            logger.info(
-                "Model warm up completed in the end of epoch %d. Unfreezing encoder weights.",
-                trainer.current_epoch,
-            )
+        if trainer.current_epoch >= self.warmup_epochs:
             self.set_component_trainable(pl_module, trainable=True)
             self.warmed_up = True
+        else:
+            self.set_component_trainable(pl_module, trainable=False)
+
+    def on_train_epoch_start(self, trainer, pl_module):
+        if self.warmed_up or trainer.current_epoch < self.warmup_epochs:
+            return
+        logger.info(
+            "Model warm up completed before epoch %d. Unfreezing encoder weights.",
+            trainer.current_epoch,
+        )
+        self.set_component_trainable(pl_module, trainable=True)
+        self.warmed_up = True
+
+    def on_train_epoch_end(self, trainer, pl_module):
+        return
 
     def set_component_trainable(self, pl_module, trainable=True):
         pl_module.set_encoder_trainable(trainable=trainable)
@@ -549,16 +544,23 @@ class EMACallback(pl.callbacks.Callback):
         self._shadow: dict = {}
         self._original: dict = {}
         self._last_global_step: int = -1
+        self._state_loaded: bool = False
 
     # -- build / update shadow --
 
     def on_fit_start(self, trainer, pl_module):
-        self._shadow = {
-            name: param.data.clone()
-            for name, param in pl_module.named_parameters()
-            if param.requires_grad
-        }
-        self._last_global_step = -1
+        if not self._state_loaded:
+            self._shadow = {
+                name: param.data.detach().clone()
+                for name, param in pl_module.named_parameters()
+                if param.requires_grad
+            }
+            self._last_global_step = -1
+
+    def on_before_optimizer_step(self, trainer, pl_module, optimizer):
+        for name, param in pl_module.named_parameters():
+            if param.requires_grad and name not in self._shadow:
+                self._shadow[name] = param.data.detach().clone()
 
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
         step = trainer.global_step
@@ -613,6 +615,7 @@ class EMACallback(pl.callbacks.Callback):
     def load_state_dict(self, state_dict):
         self._shadow = state_dict.get("shadow", {})
         self.decay = state_dict.get("decay", self.decay)
+        self._state_loaded = True
 
 
 class MixStyleCallback(pl.callbacks.Callback):
@@ -808,7 +811,7 @@ class PatienceWarmupCallback(pl.callbacks.Callback):
         mode: ``"min"`` (lower is better, e.g. loss) or ``"max"`` (higher is
             better, e.g. silhouette score).
         min_epochs: Minimum number of epochs to keep the encoder frozen,
-            regardless of patience.  Default ``1``.
+            regardless of patience.  Default ``0``.
         **kwargs: Ignored extra Hydra arguments.
 
     Returns:
@@ -862,8 +865,19 @@ class PatienceWarmupCallback(pl.callbacks.Callback):
         Returns:
             ``None``.
         """
-        if not self._warmed_up:
-            pl_module.set_encoder_trainable(trainable=False)
+        pl_module.set_encoder_trainable(trainable=self._warmed_up)
+
+    def state_dict(self):
+        return {
+            "best": self._best,
+            "wait": self._wait,
+            "warmed_up": self._warmed_up,
+        }
+
+    def load_state_dict(self, state_dict):
+        self._best = state_dict.get("best")
+        self._wait = state_dict.get("wait", 0)
+        self._warmed_up = state_dict.get("warmed_up", False)
 
     def on_validation_epoch_end(
         self, trainer: "pl.Trainer", pl_module: "pl.LightningModule"

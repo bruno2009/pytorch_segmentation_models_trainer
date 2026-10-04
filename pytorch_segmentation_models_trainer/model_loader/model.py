@@ -481,9 +481,6 @@ class Model(pl.LightningModule):
 
         param_groups = []
         for name, param in self.named_parameters():
-            if not param.requires_grad:
-                continue
-
             # Determine LR based on layer position
             if "encoder" not in name:
                 # Decoder / segmentation head: full LR
@@ -510,10 +507,14 @@ class Model(pl.LightningModule):
             )
 
         lr_values = [g["lr"] for g in param_groups]
+        lr_range = (
+            f"LR range: [{min(lr_values):.2e}, {max(lr_values):.2e}]"
+            if lr_values
+            else "no parameters"
+        )
         logger.info(
             f"Layer-wise LR decay (rate={layer_decay}, {num_stages} stages): "
-            f"{len(param_groups)} param groups, "
-            f"LR range: [{min(lr_values):.2e}, {max(lr_values):.2e}]"
+            f"{len(param_groups)} param groups, {lr_range}"
         )
         return param_groups
 

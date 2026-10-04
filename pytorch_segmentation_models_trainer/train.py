@@ -21,11 +21,13 @@
 
 import logging
 import re
-
+import torch
 
 from pytorch_segmentation_models_trainer.custom_callbacks.training_callbacks import (
     FinalMetricsCallback,
     FrameFieldComputeWeightNormLossesCallback,
+    PatienceWarmupCallback,
+    WarmupCallback,
 )
 from pytorch_segmentation_models_trainer.model_loader.model import Model
 from pytorch_segmentation_models_trainer.model_loader.frame_field_model import (
@@ -122,21 +124,43 @@ def train(cfg: DictConfig):
         "Starting the training of a model with the following configuration: \n%s",
         OmegaConf.to_yaml(cfg),
     )
-    if "resume_from_checkpoint" in cfg.hyperparameters:
+    hyperparameters = cfg.get("hyperparameters", {})
+    resume_from_checkpoint = hyperparameters.get("resume_from_checkpoint")
+    init_from_checkpoint = hyperparameters.get("init_from_checkpoint")
+    if resume_from_checkpoint and init_from_checkpoint:
+        raise ValueError(
+            "Set only one of hyperparameters.resume_from_checkpoint or "
+            "hyperparameters.init_from_checkpoint."
+        )
+
+    model = (
+        Model(cfg)
+        if "pl_model" not in cfg
+        else import_module_from_cfg(cfg.pl_model)(cfg)
+    )
+
+    if resume_from_checkpoint:
         logger.info(
-            f"Resuming from checkpoint: {cfg.hyperparameters.resume_from_checkpoint}"
+            "Resuming full training state from checkpoint: %s",
+            resume_from_checkpoint,
         )
-        model = import_module_from_cfg(cfg.pl_model).load_from_checkpoint(
-            cfg.hyperparameters.resume_from_checkpoint,
-            cfg=cfg,
-            weights_only=False,
+    elif init_from_checkpoint:
+        logger.info("Initializing model weights from checkpoint: %s", init_from_checkpoint)
+        checkpoint = torch.load(
+            init_from_checkpoint, map_location="cpu", weights_only=False
         )
-    else:
-        model = (
-            Model(cfg)
-            if "pl_model" not in cfg
-            else import_module_from_cfg(cfg.pl_model)(cfg)
-        )
+        state_dict = checkpoint.get("state_dict", checkpoint)
+        if not isinstance(state_dict, dict):
+            raise ValueError(
+                f"Checkpoint at {init_from_checkpoint!r} does not contain a state_dict."
+            )
+        try:
+            model.load_state_dict(state_dict)
+        except RuntimeError as exc:
+            raise RuntimeError(
+                f"Checkpoint at {init_from_checkpoint!r} is incompatible with "
+                "the configured model."
+            ) from exc
     trainer_logger = (
         instantiate(cfg.logger, _recursive_=False) if "logger" in cfg else True
     )
@@ -145,6 +169,13 @@ def train(cfg: DictConfig):
         if "callbacks" in cfg
         else []
     )
+    if any(isinstance(cb, WarmupCallback) for cb in callback_list) and any(
+        isinstance(cb, PatienceWarmupCallback) for cb in callback_list
+    ):
+        raise ValueError(
+            "WarmupCallback and PatienceWarmupCallback cannot be configured "
+            "together because both control encoder trainability."
+        )
     if isinstance(model, FrameFieldSegmentationPLModel):
         is_norm_loss_added = False
         for callback in callback_list:
@@ -161,7 +192,10 @@ def train(cfg: DictConfig):
     if deterministic_cudnn:
         pl_trainer_cfg.setdefault("deterministic", True)
     trainer = Trainer(**pl_trainer_cfg, logger=trainer_logger, callbacks=callback_list)
-    trainer.fit(model)
+    if resume_from_checkpoint:
+        trainer.fit(model, ckpt_path=resume_from_checkpoint)
+    else:
+        trainer.fit(model)
     if "test_dataset" in cfg:
         logger.info("test_dataset found in config — running trainer.test()")
         checkpoint_callbacks = getattr(trainer, "checkpoint_callbacks", None)

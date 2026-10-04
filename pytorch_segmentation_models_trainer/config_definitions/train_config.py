@@ -76,6 +76,8 @@ class Hyperparameters:
     epochs: int = 10
     max_lr: float = 1e-2
     classes: int = 1
+    resume_from_checkpoint: Optional[str] = None
+    init_from_checkpoint: Optional[str] = None
 
 
 @dataclass
