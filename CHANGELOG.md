@@ -1,5 +1,14 @@
 # Unreleased
 
+## Checkpoint and Freeze Lifecycle
+
+- Made `layer_decay` optimizer groups include frozen parameters so they can train after a later unfreeze, matching the standard optimizer path.
+- Corrected `WarmupCallback` to freeze the encoder before epoch 0 and unfreeze at the start of the first epoch after warmup, including zero-length warmup and resumed runs.
+- Added distinct `resume_from_checkpoint` (full Lightning training-state resume) and `init_from_checkpoint` (weights-only initialization) options; null paths are ignored, simultaneous paths are rejected, and resume works with or without `pl_model`.
+- Persisted and reapplied `PatienceWarmupCallback` state, and reject configurations that combine it with `WarmupCallback` because both control encoder trainability.
+- Updated EMA to preserve checkpoint-restored shadows and begin tracking parameters when they become trainable.
+- Added regression coverage and updated checkpoint and warmup documentation.
+
 ## PyTorch upgrade to 2.13
 
 - Unpinned `torch`/`torchvision` (already unpinned) now resolve to **2.13.0 / 0.28.0** — the default PyPI Linux wheel bundles CUDA 13.0 (`+cu130`), which requires compute capability sm_75+ (Turing or newer). Tesla V100 (Volta, sm_70) is **not** supported by this default build.

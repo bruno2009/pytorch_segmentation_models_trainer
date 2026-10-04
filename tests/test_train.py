@@ -137,6 +137,90 @@ class Test_Train(CustomTestCase):
 
     @patch("pytorch_segmentation_models_trainer.train.Trainer")
     @patch.object(Model, "setup")
+    def test_resume_uses_trainer_checkpoint_path_without_pl_model(
+        self, mock_setup, MockTrainer
+    ):
+        mock_trainer = MagicMock(spec=pl.Trainer)
+        MockTrainer.return_value = mock_trainer
+        checkpoint_path = "/tmp/resume.ckpt"
+
+        with initialize(config_path="./test_configs"):
+            cfg = compose(
+                config_name="experiment.yaml",
+                overrides=[
+                    "train_dataset.input_csv_path=" + self.csv_ds_file,
+                    "val_dataset.input_csv_path=" + self.csv_ds_file,
+                    f"++hyperparameters.resume_from_checkpoint={checkpoint_path}",
+                ],
+            )
+            train(cfg)
+
+        mock_trainer.fit.assert_called_once()
+        self.assertEqual(
+            mock_trainer.fit.call_args.kwargs["ckpt_path"], checkpoint_path
+        )
+
+    @patch("pytorch_segmentation_models_trainer.train.Trainer")
+    @patch.object(Model, "setup")
+    def test_null_resume_checkpoint_does_not_resume(self, mock_setup, MockTrainer):
+        mock_trainer = MagicMock(spec=pl.Trainer)
+        MockTrainer.return_value = mock_trainer
+
+        with initialize(config_path="./test_configs"):
+            cfg = compose(
+                config_name="experiment.yaml",
+                overrides=[
+                    "train_dataset.input_csv_path=" + self.csv_ds_file,
+                    "val_dataset.input_csv_path=" + self.csv_ds_file,
+                    "++hyperparameters.resume_from_checkpoint=null",
+                ],
+            )
+            train(cfg)
+
+        mock_trainer.fit.assert_called_once_with(mock_trainer.fit.call_args.args[0])
+
+    @patch("pytorch_segmentation_models_trainer.train.torch.load")
+    @patch("pytorch_segmentation_models_trainer.train.Trainer")
+    @patch.object(Model, "load_state_dict")
+    @patch.object(Model, "setup")
+    def test_init_from_checkpoint_loads_weights_without_trainer_resume(
+        self, mock_setup, mock_load_state_dict, MockTrainer, mock_torch_load
+    ):
+        mock_trainer = MagicMock(spec=pl.Trainer)
+        MockTrainer.return_value = mock_trainer
+        mock_torch_load.return_value = {"state_dict": {"weight": "weights"}}
+
+        with initialize(config_path="./test_configs"):
+            cfg = compose(
+                config_name="experiment.yaml",
+                overrides=[
+                    "train_dataset.input_csv_path=" + self.csv_ds_file,
+                    "val_dataset.input_csv_path=" + self.csv_ds_file,
+                    "++hyperparameters.init_from_checkpoint=/tmp/weights.ckpt",
+                ],
+            )
+            train(cfg)
+
+        mock_torch_load.assert_called_once_with(
+            "/tmp/weights.ckpt", map_location="cpu", weights_only=False
+        )
+        mock_load_state_dict.assert_called_once_with({"weight": "weights"})
+        mock_trainer.fit.assert_called_once_with(mock_trainer.fit.call_args.args[0])
+
+    def test_checkpoint_options_are_mutually_exclusive(self):
+        with initialize(config_path="./test_configs"):
+            cfg = compose(
+                config_name="experiment.yaml",
+                overrides=[
+                    "++hyperparameters.resume_from_checkpoint=/tmp/resume.ckpt",
+                    "++hyperparameters.init_from_checkpoint=/tmp/weights.ckpt",
+                ],
+            )
+            with self.assertRaisesRegex(ValueError, "Set only one"):
+                train(cfg)
+
+    @patch("pytorch_segmentation_models_trainer.train.Trainer")
+    @patch.object(Model, "setup")
     def test_final_metrics_callback_added_by_default(
         self, mock_setup, MockTrainer
     ) -> None:

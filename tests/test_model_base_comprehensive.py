@@ -81,6 +81,38 @@ class TestModelBaseComprehensive(unittest.TestCase):
             opt = model.get_optimizer()
             self.assertIsInstance(opt, torch.optim.Adam)
 
+    def test_layer_decay_keeps_frozen_parameters_and_all_frozen_groups(self):
+        self.cfg.hyperparameters.layer_decay = 0.8
+        with patch.object(Model, "get_loss_function"):
+            model = Model(self.cfg)
+            encoder_param = nn.Parameter(torch.tensor([1.0]), requires_grad=False)
+            decoder_param = nn.Parameter(torch.tensor([1.0]), requires_grad=False)
+
+            def named_params():
+                yield "model.encoder.stages.0.weight", encoder_param
+                yield "model.decoder.weight", decoder_param
+
+            model.named_parameters = named_params
+            optimizer = model.get_optimizer()
+            group_params = [
+                param for group in optimizer.param_groups for param in group["params"]
+            ]
+            self.assertEqual({id(p) for p in group_params}, {
+                id(encoder_param),
+                id(decoder_param),
+            })
+
+            before = encoder_param.detach().clone()
+            optimizer.step()
+            self.assertIsNone(encoder_param.grad)
+            torch.testing.assert_close(encoder_param, before)
+
+            encoder_param.requires_grad_(True)
+            encoder_param.sum().backward()
+            optimizer.step()
+            self.assertIsNotNone(encoder_param.grad)
+            self.assertFalse(torch.equal(encoder_param.detach(), before))
+
     def test_configure_optimizers_onecycle_auto(self):
         self.cfg.scheduler_list = [
             {

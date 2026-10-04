@@ -55,13 +55,44 @@ def test_freezes_encoder_on_fit_start():
     pl_module.set_encoder_trainable.assert_called_once_with(trainable=False)
 
 
-def test_does_not_refreeze_if_already_warmed_up():
+def test_restores_trainable_state_if_already_warmed_up():
     cb = PatienceWarmupCallback(monitor="val/reconstruction_loss", patience=3)
     cb._warmed_up = True
     trainer = _make_trainer()
     pl_module = _make_pl_module()
     cb.on_fit_start(trainer, pl_module)
-    pl_module.set_encoder_trainable.assert_not_called()
+    pl_module.set_encoder_trainable.assert_called_once_with(trainable=True)
+
+
+def test_state_dict_restores_patience_progress_and_trainability():
+    cb = PatienceWarmupCallback(monitor="val/reconstruction_loss", patience=5)
+    cb._best = 0.8
+    cb._wait = 3
+    state = cb.state_dict()
+
+    restored = PatienceWarmupCallback(monitor="val/reconstruction_loss", patience=5)
+    restored.load_state_dict(state)
+    trainer = _make_trainer()
+    pl_module = _make_pl_module()
+    restored.on_fit_start(trainer, pl_module)
+
+    assert restored._best == 0.8
+    assert restored._wait == 3
+    assert not restored._warmed_up
+    pl_module.set_encoder_trainable.assert_called_once_with(trainable=False)
+
+
+def test_warmed_up_state_restores_trainable_encoder():
+    cb = PatienceWarmupCallback(monitor="val/reconstruction_loss", patience=2)
+    cb._warmed_up = True
+    restored = PatienceWarmupCallback(monitor="val/reconstruction_loss", patience=2)
+    restored.load_state_dict(cb.state_dict())
+
+    trainer = _make_trainer()
+    pl_module = _make_pl_module()
+    restored.on_fit_start(trainer, pl_module)
+
+    pl_module.set_encoder_trainable.assert_called_once_with(trainable=True)
 
 
 # ===========================================================================

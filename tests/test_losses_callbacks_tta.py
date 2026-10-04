@@ -696,6 +696,32 @@ class TestEMACallback(unittest.TestCase):
                 f"State dict roundtrip failed for {name}",
             )
 
+    def test_restored_shadow_survives_fit_start_and_tracks_unfrozen_params(self):
+        self.model.set_encoder_trainable(False)
+        ema = EMACallback(decay=0.9)
+        ema.on_fit_start(self.trainer, self.model)
+        encoder_name, encoder_param = next(
+            (name, param)
+            for name, param in self.model.named_parameters()
+            if "encoder" in name
+        )
+        self.assertNotIn(encoder_name, ema._shadow)
+
+        state = ema.state_dict()
+        restored = EMACallback()
+        restored.load_state_dict(state)
+        self.model.set_encoder_trainable(True)
+        restored.on_fit_start(self.trainer, self.model)
+        self.assertNotIn(encoder_name, restored._shadow)
+        restored.on_before_optimizer_step(self.trainer, self.model, None)
+        self.assertIn(encoder_name, restored._shadow)
+
+        with torch.no_grad():
+            encoder_param.add_(1.0)
+        self.trainer.global_step = 100
+        restored.on_train_batch_end(self.trainer, self.model, None, None, 0)
+        self.assertFalse(torch.equal(restored._shadow[encoder_name], encoder_param))
+
     def test_frozen_params_excluded(self):
         ema = EMACallback(decay=0.999)
         # Freeze encoder
@@ -923,44 +949,52 @@ class TestWarmupCallback(unittest.TestCase):
         self.model = _TinyModel()
         self.trainer = Mock()
 
-    def test_on_fit_start_sets_warmed_up_if_past(self):
+    def test_on_fit_start_unfreezes_if_past_warmup(self):
         cb = WarmupCallback(warmup_epochs=2)
         self.trainer.current_epoch = 5  # past warmup
+        self.model.set_encoder_trainable(False)
         cb.on_fit_start(self.trainer, self.model)
         self.assertTrue(cb.warmed_up)
+        self.assertTrue(all(p.requires_grad for p in self.model.encoder.parameters()))
 
     def test_on_fit_start_not_warmed_up_initially(self):
         cb = WarmupCallback(warmup_epochs=2)
         self.trainer.current_epoch = 0
+        self.model.set_encoder_trainable(True)
         cb.on_fit_start(self.trainer, self.model)
         self.assertFalse(cb.warmed_up)
+        self.assertTrue(all(not p.requires_grad for p in self.model.encoder.parameters()))
 
     def test_freeze_during_warmup(self):
         cb = WarmupCallback(warmup_epochs=3)
         self.trainer.current_epoch = 0
         cb.on_fit_start(self.trainer, self.model)
 
-        # Freeze happens at epoch == warmup_epochs - 1 = 2
-        self.trainer.current_epoch = 2
-        cb.on_train_epoch_start(self.trainer, self.model)
-        # Verify encoder is frozen
-        for p in self.model.encoder.parameters():
-            self.assertFalse(p.requires_grad)
+        for epoch in range(3):
+            self.trainer.current_epoch = epoch
+            cb.on_train_epoch_start(self.trainer, self.model)
+            self.assertTrue(
+                all(not p.requires_grad for p in self.model.encoder.parameters())
+            )
 
     def test_unfreeze_after_warmup(self):
-        cb = WarmupCallback(warmup_epochs=2)
+        cb = WarmupCallback(warmup_epochs=3)
         self.trainer.current_epoch = 0
         cb.on_fit_start(self.trainer, self.model)
 
-        # Simulate warmup epoch
-        self.trainer.current_epoch = 1
+        self.trainer.current_epoch = 3
         cb.on_train_epoch_start(self.trainer, self.model)
-        cb.on_train_epoch_end(self.trainer, self.model)
 
         self.assertTrue(cb.warmed_up)
-        # Encoder should be unfrozen
-        for p in self.model.encoder.parameters():
-            self.assertTrue(p.requires_grad)
+        self.assertTrue(all(p.requires_grad for p in self.model.encoder.parameters()))
+
+    def test_zero_warmup_is_trainable_at_fit_start(self):
+        cb = WarmupCallback(warmup_epochs=0)
+        self.model.set_encoder_trainable(False)
+        self.trainer.current_epoch = 0
+        cb.on_fit_start(self.trainer, self.model)
+        self.assertTrue(cb.warmed_up)
+        self.assertTrue(all(p.requires_grad for p in self.model.encoder.parameters()))
 
     def test_no_freeze_after_warmed_up(self):
         cb = WarmupCallback(warmup_epochs=2)

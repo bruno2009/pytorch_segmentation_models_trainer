@@ -304,7 +304,23 @@ hyperparameters:
   resume_from_checkpoint: ./checkpoints/my_experiment/last.ckpt
 ```
 
-The training script detects this key and calls `load_from_checkpoint` before constructing the trainer, restoring model weights, optimizer state, and epoch counter.
+This resumes the complete Lightning training state, including model weights, optimizer, scheduler, epoch, global step, and callback state. The training script constructs the model from the current config and passes the checkpoint to `trainer.fit(..., ckpt_path=...)`; this supports both the default `Model` and a configured `pl_model`.
+
+To initialize a new run from checkpoint weights without restoring optimizer, scheduler, epoch, or callback state, use `init_from_checkpoint` instead:
+
+```yaml
+hyperparameters:
+  init_from_checkpoint: ./checkpoints/my_experiment/last.ckpt
+```
+
+The checkpoint model state must match the configured architecture; incompatible or missing keys raise an error. Set only one of `resume_from_checkpoint` and `init_from_checkpoint`. Either option may be `null` to disable it.
+
+Both options can be set through Hydra CLI overrides:
+
+```bash
+pytorch-smt --config-dir ./configs --config-name train_unet \
+  hyperparameters.resume_from_checkpoint=./checkpoints/my_experiment/last.ckpt
+```
 
 ---
 

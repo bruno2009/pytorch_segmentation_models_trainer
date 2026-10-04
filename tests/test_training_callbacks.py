@@ -44,19 +44,16 @@ class TestTrainingCallbacks(unittest.TestCase):
 
         # Test lifecycle
         cb = WarmupCallback(warmup_epochs=2)
+        self.pl_module.set_encoder_trainable.reset_mock()
         self.trainer.current_epoch = 0
         cb.on_fit_start(self.trainer, self.pl_module)
         self.assertFalse(cb.warmed_up)
 
         cb.on_train_epoch_start(self.trainer, self.pl_module)
-        # Should not freeze yet because current_epoch (0) < warmup_epochs - 1 (1)
-        self.pl_module.set_encoder_trainable.assert_not_called()
+        self.pl_module.set_encoder_trainable.assert_called_once_with(trainable=False)
 
-        self.trainer.current_epoch = 1
+        self.trainer.current_epoch = 2
         cb.on_train_epoch_start(self.trainer, self.pl_module)
-        self.pl_module.set_encoder_trainable.assert_called_with(trainable=False)
-
-        cb.on_train_epoch_end(self.trainer, self.pl_module)
         self.pl_module.set_encoder_trainable.assert_called_with(trainable=True)
         self.assertTrue(cb.warmed_up)
 

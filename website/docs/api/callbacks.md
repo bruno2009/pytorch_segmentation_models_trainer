@@ -317,7 +317,8 @@ Because `EMACallback` injects the EMA weights into `state_dict` at save time, lo
 
 #### Fires on
 
-- `on_fit_start` — initialises shadow weights from the current model parameters.
+- `on_fit_start` — initialises shadow weights from currently trainable model parameters, unless a shadow was restored from a checkpoint.
+- `on_before_optimizer_step` — adds newly trainable parameters to the shadow before they can be updated.
 - `on_train_batch_end` — updates shadow weights (only when the optimizer has actually stepped).
 - `on_validation_epoch_start` — swaps in shadow weights.
 - `on_validation_epoch_end` — restores online weights.
@@ -405,13 +406,12 @@ callbacks:
 from pytorch_segmentation_models_trainer.custom_callbacks.training_callbacks import WarmupCallback
 ```
 
-Freezes the model encoder for the first `warmup_epochs` training epochs to let the decoder head stabilise before end-to-end fine-tuning begins. Calls `pl_module.set_encoder_trainable(trainable)` on the Lightning module, so the module must implement that method.
+Freezes the model encoder before training and through the first `warmup_epochs` epochs to let the decoder head stabilise before end-to-end fine-tuning begins. For example, `warmup_epochs: 3` keeps the encoder frozen for epochs 0, 1, and 2, then unfreezes it at the start of epoch 3. At fit start, the callback synchronizes trainability with the current epoch, including after resume. Calls `pl_module.set_encoder_trainable(trainable)` on the Lightning module, so the module must implement that method.
 
 #### Fires on
 
-- `on_fit_start` — checks whether warmup has already elapsed (for resumed training).
-- `on_train_epoch_start` — freezes encoder weights if still in warmup.
-- `on_train_epoch_end` — unfreezes encoder weights once warmup is complete.
+- `on_fit_start` — freezes the encoder during warmup or unfreezes it if warmup has elapsed.
+- `on_train_epoch_start` — unfreezes at the first epoch after warmup.
 
 #### Constructor Parameters
 

@@ -325,7 +325,7 @@ Checkpoint files are saved as `.ckpt` (PyTorch Lightning format) and contain mod
 
 ### Resuming Training
 
-Add `resume_from_checkpoint` under `hyperparameters` to continue a previous run:
+Use `resume_from_checkpoint` under `hyperparameters` to continue a previous run:
 
 ```yaml
 hyperparameters:
@@ -333,7 +333,23 @@ hyperparameters:
   resume_from_checkpoint: ./checkpoints/experiment_name/last.ckpt
 ```
 
-The training script detects this key and calls `load_from_checkpoint` before constructing the trainer, restoring all state including the epoch counter.
+This resumes the complete Lightning training state, including model weights, optimizer, scheduler, epoch, global step, and callback state. The model is constructed from the current config, then the checkpoint is passed to `trainer.fit(..., ckpt_path=...)`. This works with the default `Model` as well as a configured `pl_model`.
+
+To start a new run from existing weights without restoring training state, use `init_from_checkpoint` instead:
+
+```yaml
+hyperparameters:
+  init_from_checkpoint: ./checkpoints/experiment_name/last.ckpt
+```
+
+Weights-only initialization requires the checkpoint model state to match the configured model. Incompatible or missing model keys raise an error. Set only one of `resume_from_checkpoint` and `init_from_checkpoint`; configuring both is an error. Either option may be left as `null` to disable it.
+
+Hydra CLI overrides can set a checkpoint path, for example:
+
+```bash
+pytorch-smt --config-dir ./configs --config-name train_unet \
+  hyperparameters.resume_from_checkpoint=./checkpoints/experiment_name/last.ckpt
+```
 
 ### Loading a Specific Checkpoint for Inference
 
